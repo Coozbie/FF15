@@ -350,7 +350,7 @@ function Ahri:OnTick()
             if target then
                 local pred = q_preds[target.networkId]
 
-                if pred and self:CastE(pred) then
+                if pred and self:CastQ(pred) then
                     return
                 end
             end

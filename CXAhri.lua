@@ -1,6 +1,6 @@
 if myHero.charName ~= "Ahri" then return end
 local Ahri = {}
-local version = 1.5
+local version = 2
 GetInternalWebResultAsync('CXAhri.version', function(v)
     if v and tonumber(v) > version then
         DownloadInternalFileAsync('CXAhri.lua', SCRIPT_PATH, function(success)
@@ -27,6 +27,7 @@ function OnLoad()
     _G.LoadDependenciesAsync(dependencies, function(success)
         if success then
             Orbwalker:Setup()
+            Ahri:__init()
         end
     end)
 end
@@ -47,7 +48,6 @@ function Ahri:__init()
         Object = nil,
         Source = myHero,
         castRate = "slow"
-
     }
     self.e = {
         type = "linear",
@@ -55,7 +55,12 @@ function Ahri:__init()
         range = 935,
         delay = 0.25,
         width = 120,
-        castRate = "slow"
+        castRate = "slow",
+        collision = {
+            ["Wall"] = true,
+            ["Hero"] = true,
+            ["Minion"] = true
+        }
     }
     self:Menu()
     self.RHaveBuff = false
@@ -66,9 +71,6 @@ function Ahri:__init()
         DreamTS(
         self.menu.dreamTs,
         {
-            ValidTarget = function(unit)
-                return _G.Prediction.IsValidTarget(unit, 960)
-            end,
             Damage = function(unit)
                 return dmgLib:CalculateMagicDamage(myHero, unit, 100)
             end
@@ -110,6 +112,13 @@ function Ahri:Menu()
         self.menu.harass:checkbox("w", "Use W", true)
         self.menu.harass:checkbox("e", "Use E", true)
         self.menu.harass:slider("mana", "Min. Mana Percent: ", 0, 100, 10, 5)
+
+    self.menu:sub("antigap", "Anti Gapclose")
+        self.antiGapHeros = {}
+        for _, enemy in ipairs(ObjectManager:GetEnemyHeroes()) do
+            self.menu.antigap:checkbox(enemy.charName, enemy.charName, true)
+            self.antiGapHeros[enemy.networkId] = true
+        end
 
     self.menu:sub("draws", "Draw")
         self.menu.draws:checkbox("q", "Q", true)
@@ -252,22 +261,19 @@ function Ahri:GetPercentHealth(obj)
   return (obj.health / obj.maxHealth) * 100
 end
 
-function Ahri:CastQ(target)
-    if myHero.spellbook:CanUseSpell(0) == 0 then
-        local pred = _G.Prediction.GetPrediction(target, self.q, myHero)
-        if pred and pred.castPosition and GetDistanceSqr(pred.castPosition) <= (self.q.range * self.q.range) and not pred:windWallCollision() then
-            myHero.spellbook:CastSpell(0, pred.castPosition)
-            pred:draw()
-        end
+function Ahri:CastQ(pred)
+    if pred.rates["slow"] then
+        myHero.spellbook:CastSpell(SpellSlot.Q, pred.castPosition)
+        pred:draw()
+        return true
     end
 end
 
-function Ahri:CastE(target)
-    if myHero.spellbook:CanUseSpell(2) == 0 then
-        local pred = _G.Prediction.GetPrediction(target, self.e, myHero)
-        if pred and pred.castPosition and GetDistanceSqr(pred.castPosition) < (self.e.range * self.e.range) and not pred:windWallCollision() and not pred:minionCollision() then
-            myHero.spellbook:CastSpell(2, pred.castPosition)
-        end
+function Ahri:CastE(pred)
+    if pred.rates["slow"] then
+        myHero.spellbook:CastSpell(SpellSlot.E, pred.castPosition)
+        pred:draw()
+        return true
     end
 end
 
@@ -288,64 +294,74 @@ function Ahri:CastToVector(vector)
     end
 end
 
---[[function Ahri:CatchQ()
-    self.q.CatchPosition = nil
-    Orbwalker:BlockAttack(false)
-    Orbwalker:BlockMove(false)
-    local target = self:GetTarget(880)
-    if self.q.Object ~= nil and self.q.Object.isValid and self.q.Object.position and ValidTarget(target) and self.q.IsReturning and GetDistanceSqr(myHero, target) < GetDistanceSqr(myHero, self.q.Object) then
-        local Position = _G.Prediction.GetUnitPosition(target, 0)
-        if Position and GetDistanceSqr(myHero, Position) < GetDistanceSqr(myHero, self.q.Object) then
-            local TimeLeft = GetDistance(self.q.Object, target)/self.q.speed
-            local Extended = Vector(self.q.Object):toDX3() + Vector((Vector(Position) - Vector(self.q.Object)):toDX3()):normalized() * 1500
-            local ClosestToTargetLine, pointLine, isOnSegment1 = self:VectorPointProjectionOnLineSegment(Extended, self.q.Object, myHero)
-            local ClosestToHeroLine, pointLine, isOnSegment2 = self:VectorPointProjectionOnLineSegment(myHero, self.q.Object, Position)
-            ClosestToTargetLine = Vector(ClosestToTargetLine.x, self.q.Object.y, ClosestToTargetLine.y):toDX3()
-            ClosestToHeroLine = Vector(ClosestToHeroLine.x, self.q.Object.y, ClosestToHeroLine.y):toDX3()
-            if isOnSegment1 and isOnSegment2 and GetDistanceSqr(ClosestToTargetLine, self.q.Object) > GetDistanceSqr(Position, self.q.Object) then
-                if GetDistanceSqr(myHero, ClosestToTargetLine) < math.pow(myHero.characterIntermediate.movementSpeed * TimeLeft, 2) then
-                    self.q.CatchPosition = ClosestToTargetLine
-                    if self.menu.combo.qc:get() and GetDistanceSqr(ClosestToHeroLine, Position) > math.pow(self.q.width, 2) then
-                        Orbwalker:BlockAttack(true)
-                        Orbwalker:BlockMove(true)
-                        if Orbwalker:CanMove() then
-                            local x = self.q.CatchPosition.x
-                            local z = self.q.CatchPosition.z
-                            local y = myHero.y
-                            myHero:IssueOrder(GameObjectOrder.MoveTo, D3DXVECTOR3(x,y,z))
-                        end
-                    end
-                elseif GetDistanceSqr(myHero, ClosestToTargetLine) < math.pow(450 + myHero.characterIntermediate.movementSpeed * TimeLeft, 2) then
-                    self.q.CatchPosition = ClosestToTargetLine
-                    if Orbwalker:GetMode() == "Combo" and self.menu.combo.rc:get() then
-                        if GetDistanceSqr(ClosestToHeroLine, Position) > math.pow(self.q.width, 2) then
-                            local rPos = myHero + Vector((Vector(self.q.CatchPosition) - Vector(myHero)):toDX3()):normalized() * GetDistance(myHero, self.q.CatchPosition) * 1.2
-                            if not self:Collides(rPos) then
-                                local x = rPos.x
-                                local z = rPos.z
-                                local y = myHero.y
-                                myHero.spellbook:CastSpell(3, D3DXVECTOR3(x,y,z))
-                            end
-                        end
-                    end
+function Ahri:OnTick()
+    if myHero.isDead then
+        return
+    end
+
+    local ComboMode = Orbwalker:GetMode() == "Combo"
+    local HarassMode = Orbwalker:GetMode() == "Harass"
+
+    if myHero.spellbook:CanUseSpell(SpellSlot.E) == 0 then
+
+        -- Hybrid mode -> less cast priority but peel close targets if needed
+        local e_targets, e_preds =
+            self.TS:GetTargets(self.e, myHero, nil, nil, self.TS.Modes["Hybrid [1.0]"])
+
+        for i = 1, #e_targets do
+            local unit = e_targets[i]
+            local pred = e_preds[unit.networkId]
+            if pred then
+                if
+                    pred.targetDashing and self.antiGapHeros[unit.networkId] and
+                        self.menu.antigap[unit.charName]:get() and
+                        self:CastE(pred)
+                 then
+                    return
+                end
+                if pred.isInterrupt and self:CastE(pred) then
+                    return
+                end
+            end
+        end
+
+        if (ComboMode and self.menu.combo.e:get()) or (HarassMode and self.menu.harass.e:get()) then
+            local target = e_targets[1]
+            if target then
+                local pred = e_preds[target.networkId]
+
+                if pred and self:CastE(pred) then
+                    return
+                end
+            end
+        end
+
+        if ComboMode and self.menu.Key.e:get() then
+            return
+        end
+    end
+
+    if myHero.spellbook:CanUseSpell(SpellSlot.Q) == 0 then
+        local q_targets, q_preds =
+            self.TS:GetTargets(self.q, myHero)
+
+        if (ComboMode and self.menu.combo.q:get()) or (HarassMode and self.menu.harass.q:get()) then
+            local target = q_targets[1]
+            if target then
+                local pred = q_preds[target.networkId]
+
+                if pred and self:CastE(pred) then
+                    return
                 end
             end
         end
     end
-end]]
 
-function Ahri:OnTick()
-    local target = self:GetTarget(960)
-    if Orbwalker:GetMode() == "Combo" then
-        if target and ValidTarget(target) then
-            if self.menu.combo.e:get() then                
-                self:CastE(target)
-            end
-            if self.menu.Key.e:get() and myHero.spellbook:CanUseSpell(2) == 0 then return end 
-            if self.menu.combo.q:get() then         
-                self:CastQ(target)
-            end 
-            if self.menu.combo.w:get() then 
+    if myHero.spellbook:CanUseSpell(SpellSlot.W) == 0 then
+        local target = self:GetTargetNormal(self.w.range - 400)
+
+        if target then
+            if (ComboMode and self.menu.combo.w:get()) or (HarassMode and self.menu.harass.w:get()) then 
                 if myHero.spellbook:CanUseSpell(1) == 0 and GetDistance(target) <= (self.menu.combo.wr:get()) then
                     if self.menu.combo.wc:get() and target.buffManager:HasBuffOfType(22) then 
                         myHero.spellbook:CastSpell(1, myHero.networkId)
@@ -355,50 +371,6 @@ function Ahri:OnTick()
                         myHero.spellbook:CastSpell(1, myHero.networkId)
                     end
                 end
-            end         
-            if self.menu.combo.r:get() and GetDistance(target) <= 700 then    
-                self:DelayAction(function() self:CastR(target) end, 1)
-            end 
-        end
-    end
-    if Orbwalker:GetMode() == "Harass" then
-        if target and ValidTarget(target) then
-            if self.menu.harass.e:get() then                
-                self:CastE(target)
-            end
-            if self.menu.harass.q:get() then         
-                self:CastQ(target)
-            end 
-            if self.menu.harass.w:get() then 
-                if myHero.spellbook:CanUseSpell(1) == 0 and GetDistanceSqr(target) <= (self.menu.combo.wr:get() * self.menu.combo.wr:get()) then
-                    myHero.spellbook:CastSpell(1, myHero.networkId)
-                end
-            end         
-        end
-    end
-    --[[if self.q.Object ~= nil and self.q.Object.isValid and self.q.Object.position then
-                self.q.range = math.huge
-                self.q.Source = self.q.Object
-                self.q.delay = 0
-                if os.clock() - self.q.LastObjectVectorTime > 0 then
-                    if self.q.LastObjectVector ~= nil then
-                        self.q.Speed = GetDistance(self.q.Object, self.q.LastObjectVector)/(os.clock() - self.q.LastObjectVectorTime)
-                    end
-                    self.q.LastObjectVector = Vector(self.q.Object):toDX3()
-                    self.q.LastObjectVectorTime = os.clock()
-                end
-            else
-                self.q.range = 870
-                self.q.Source = myHero
-                self.q.delay = 0.25
-                self.q.speed = 1700
-            end
-            self:CatchQ()]]
-    for _, target in ipairs(self:GetTarget(self.e.range, true)) do
-        if self.menu.antigap[target.charName] and self.menu.antigap[target.charName]:get() then
-            local _, canHit = _G.Prediction.IsDashing(target, self.e, myHero)
-            if canHit then
-                self:CastE(target)
             end
         end
     end
@@ -408,11 +380,9 @@ function Ahri:Hex(a, r, g, b)
     return string.format("0x%.2X%.2X%.2X%.2X", a, r, g, b)
 end
 
-function Ahri:GetTarget(dist, all)
-    self.TS.ValidTarget = function(unit)
-        return _G.Prediction.IsValidTarget(unit, dist)
-    end
-    local res = self.TS:update()
+-- For targetted abilities (aka Ahri W)
+function Ahri:GetTargetNormal(dist, all)
+    local res = self.TS:update(function(unit) return _G.Prediction.IsValidTarget(unit, dist) end)
     if all then
         return res
     else
@@ -420,8 +390,4 @@ function Ahri:GetTarget(dist, all)
             return res[1]
         end
     end
-end
-
-if myHero.charName == "Ahri" then
-    Ahri:__init()
 end

@@ -358,7 +358,7 @@ function Ahri:OnTick()
     end
 
     if myHero.spellbook:CanUseSpell(SpellSlot.W) == 0 then
-        local target = self:GetTargetNormal(self.w.range - 400)
+        local target = self:GetTargetNormal(self.menu.combo.wr:get())
 
         if target then
             if (ComboMode and self.menu.combo.w:get()) or (HarassMode and self.menu.harass.w:get()) then 
